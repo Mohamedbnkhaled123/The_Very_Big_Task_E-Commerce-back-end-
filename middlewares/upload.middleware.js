@@ -2,9 +2,15 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
-const uploadDir = path.join(__dirname, "../uploads");
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+const os = require("os");
+const uploadDir = process.env.VERCEL ? path.join(os.tmpdir(), "uploads") : path.join(__dirname, "../uploads");
+
+try {
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
+} catch (e) {
+    console.warn("Could not create upload directory:", e.message);
 }
 
 const fileFilter = (req, file, cb) => {
