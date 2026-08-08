@@ -6,7 +6,7 @@ const staticPageSchema = new mongoose.Schema(
             type: String,
             required: [true, "Page name is required"],
             unique: true,
-            enum: ["About", "Policy", "FAQ", "Contact"] 
+            enum: ["Home", "About", "Policy", "FAQ", "Contact"] 
         },
         content: {
             type: String,

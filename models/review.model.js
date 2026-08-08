@@ -10,12 +10,18 @@ const reviewSchema = new mongoose.Schema(
         productId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
-            required: false // يمكن أن يكون تقييم عام للمتجر وليس لمنتج محدد
+            required: [true, "Review must be associated with a specific product"]
+        },
+        orderId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Order",
+            required: false
         },
         text: {
             type: String,
-            required: [true, "Review text cannot be empty"],
-            trim: true
+            required: false,
+            trim: true,
+            default: ""
         },
         rating: {
             type: Number,
@@ -26,10 +32,13 @@ const reviewSchema = new mongoose.Schema(
         status: {
             type: String,
             enum: ["Pending", "Approved", "Cancelled"],
-            default: "Pending" // لا يظهر في الـ Homepage إلا بعد موافقة الأدمن
+            default: "Pending" // New reviews require Admin approval before appearing on product page
         }
     },
     { timestamps: true }
 );
+
+// Prevent duplicate reviews per user per product
+reviewSchema.index({ userId: 1, productId: 1 }, { unique: true });
 
 module.exports = mongoose.model("Review", reviewSchema);

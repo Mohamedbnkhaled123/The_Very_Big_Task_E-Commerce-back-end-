@@ -22,9 +22,13 @@ exports.authenticate = catchAsync(async (req, res, next) => {
     if (!currentUser) {
         return next(new AppError("The user belonging to this token does no longer exist.", 401));
     }
-    if (!currentUser.isActive) {
-        return next(new AppError("This user account is deactivated.", 403));
+
+    if ((currentUser.role === 'admin' || currentUser.role === 'superadmin') && currentUser.isActive === false) {
+        return next(new AppError("Your admin account has been deactivated by the Super Admin.", 403));
     }
+
+    // Refresh lastActiveAt timestamp asynchronously to track online presence
+    User.findByIdAndUpdate(currentUser._id, { lastActiveAt: new Date() }).exec().catch(() => {});
 
     req.user = currentUser;
     next();

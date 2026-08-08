@@ -14,6 +14,10 @@ exports.createOrder = catchAsync(async (req, res, next) => {
         return next(new AppError("Admins are not allowed to place orders from this store.", 403));
     }
 
+    if (req.user.canPurchase === false) {
+        return next(new AppError("ACCOUNT_PURCHASE_RESTRICTED: Your account is currently restricted from completing purchases.", 403));
+    }
+
     const user = await User.findById(userId);
     if (!user || user.cart.length === 0) {
         return next(new AppError("Your cart is empty! Cannot place an order.", 400));
@@ -23,7 +27,8 @@ exports.createOrder = catchAsync(async (req, res, next) => {
     session.startTransaction();
 
     try {
-        let totalPrice = 0;
+        let grossTotal = 0;
+        let totalDiscount = 0;
         const orderItems = [];
 
         for (const cartItem of user.cart) {
@@ -44,17 +49,38 @@ exports.createOrder = catchAsync(async (req, res, next) => {
             product.stock -= cartItem.quantity;
             await product.save({ session });
 
-            totalPrice += product.price * cartItem.quantity;
+            const priceAtPurchase = product.price;
+            const discountPercent = product.discount || 0;
+            const discountedPrice = Math.round(priceAtPurchase * (1 - discountPercent / 100) * 100) / 100;
+
+            const itemGross = priceAtPurchase * cartItem.quantity;
+            const itemDiscount = (priceAtPurchase - discountedPrice) * cartItem.quantity;
+
+            grossTotal += itemGross;
+            totalDiscount += itemDiscount;
+
             orderItems.push({
                 productId: product._id,
                 quantity: cartItem.quantity,
-                priceAtPurchase: product.price
+                priceAtPurchase,
+                discountPercent,
+                discountedPrice
             });
         }
+
+        // Rule-Based Shipping Fee: Free shipping if discounted subtotal >= EGP 1000, otherwise EGP 50
+        const discountedSubtotal = grossTotal - totalDiscount;
+        const shippingFee = discountedSubtotal >= 1000 ? 0 : 50;
+        const netTotal = discountedSubtotal + shippingFee;
+        const totalPrice = netTotal;
 
         const newOrder = await Order.create([{
             user: userId,
             items: orderItems,
+            grossTotal,
+            shippingFee,
+            totalDiscount,
+            netTotal,
             totalPrice,
             shippingAddress
         }], { session });
@@ -80,7 +106,9 @@ exports.createOrder = catchAsync(async (req, res, next) => {
 
 // Fetches user order history
 exports.getMyOrders = catchAsync(async (req, res, next) => {
-    const orders = await Order.find({ user: req.user._id }).sort("-createdAt");
+    const orders = await Order.find({ user: req.user._id })
+        .populate("items.productId", "name imgURL price")
+        .sort("-createdAt");
 
     res.status(200).json({
         status: "success",
@@ -113,12 +141,20 @@ exports.updateOrderStatus = catchAsync(async (req, res, next) => {
         }
     }
 
+    // Validation rules for post-delivery returns & refunds
+    if (status === "returned" && order.orderStatus !== "received") {
+        return next(new AppError("Return can only be initiated for orders with 'received' status.", 400));
+    }
+    if (status === "refunded" && order.orderStatus !== "returned") {
+        return next(new AppError("Refund can only be processed for orders with 'returned' status.", 400));
+    }
+
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-        const triggerRefund = ["rejected", "cancelledByAdmin", "cancelledByUser"].includes(status);
-        const alreadyRefunded = ["rejected", "cancelledByAdmin", "cancelledByUser"].includes(order.orderStatus);
+        const triggerRefund = ["rejected", "cancelledByAdmin", "cancelledByUser", "returned"].includes(status);
+        const alreadyRefunded = ["rejected", "cancelledByAdmin", "cancelledByUser", "returned", "refunded"].includes(order.orderStatus);
 
         if (triggerRefund && !alreadyRefunded) {
             for (const item of order.items) {
@@ -151,7 +187,10 @@ exports.updateOrderStatus = catchAsync(async (req, res, next) => {
 
 // Fetches all store orders
 exports.getAllOrders = catchAsync(async (req, res, next) => {
-    const orders = await Order.find().populate("user", "name email").sort("-createdAt");
+    const orders = await Order.find()
+        .populate("user", "name email")
+        .populate("items.productId", "name imgURL price")
+        .sort("-createdAt");
 
     res.status(200).json({
         status: "success",

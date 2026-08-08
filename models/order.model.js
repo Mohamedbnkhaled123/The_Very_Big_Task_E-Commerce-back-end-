@@ -21,8 +21,39 @@ const orderSchema = new mongoose.Schema({
             type: Number,
             required: true,
             min: 0
+        },
+        discountPercent: {
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 100
+        },
+        discountedPrice: {
+            type: Number,
+            required: true,
+            min: 0
         }
     }],
+    grossTotal: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    shippingFee: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    totalDiscount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    netTotal: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     totalPrice: {
         type: Number,
         required: true,
@@ -37,7 +68,9 @@ const orderSchema = new mongoose.Schema({
             "received", 
             "rejected", 
             "cancelledByAdmin", 
-            "cancelledByUser"
+            "cancelledByUser",
+            "returned",
+            "refunded"
         ],
         default: "pending"
     },
@@ -50,5 +83,8 @@ const orderSchema = new mongoose.Schema({
         phoneNumber: String
     }
 }, { timestamps: true });
+
+// Compound index for high-performance analytics aggregation
+orderSchema.index({ createdAt: -1, orderStatus: 1 });
 
 module.exports = mongoose.model("Order", orderSchema);

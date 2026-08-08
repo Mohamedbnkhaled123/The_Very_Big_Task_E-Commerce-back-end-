@@ -13,11 +13,16 @@ const userSchema = new mongoose.Schema({
   addresses: [{type:AddressSchema ,required:true}],                   
   cart: [{type:CartItemSchema ,required:true}],                       
   isActive: { type: Boolean, default: true },
+  canPurchase: { type: Boolean, default: true },
+  lastActiveAt: { type: Date, default: Date.now },
   role: {
     type: String,
-    enum: ["user", "admin"],
+    enum: ["user", "admin", "superadmin"],
     default: "user"         
-} },
+  },
+  passwordResetToken: { type: String },
+  passwordResetExpires: { type: Date }
+},
   { timestamps: true });
 
 

@@ -9,45 +9,68 @@ const catchAsync = require("../utilities/catchAsync.utility.js");
 
 const cacheKey = "products";
 
-// Fetches all store products
+// Fetches all store products with server-side pagination and filtering
 exports.getProduct = catchAsync(async (req, res, next) => {
-    let isAdmin = req.query.all === "true";
-    if (!isAdmin && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
-        try {
-            const token = req.headers.authorization.split(" ")[1];
-            const decoded = jwt.verify(token, process.env.SECRET_KEY);
-            if (decoded && (decoded.role === "admin" || decoded.role === "Admin")) {
-                isAdmin = true;
-            }
-        } catch (e) {
-            // Token expired or invalid
-        }
-    }
+    const isAdmin = req.query.all === "true";
 
+    // Build the query object
     const query = isAdmin ? {} : { isDeleted: false, isActive: true };
 
-    if (!isAdmin) {
-        const cachedProducts = cache.get(cacheKey);
-        if (cachedProducts) {
-            return res.status(200).json({ 
-                status: "success", 
-                message: "products fetched from cache", 
-                data: cachedProducts 
-            });
-        }
+    // 1. Search filter (with Arabic normalization)
+    if (req.query.search) {
+        // Normalize Arabic characters to support interchangeable letters
+        const normalizedSearch = req.query.search
+            .replace(/[اأإآ]/g, '[اأإآ]')
+            .replace(/[هة]/g, '[هة]')
+            .replace(/[يى]/g, '[يى]');
+            
+        const searchRegex = { $regex: normalizedSearch, $options: "i" };
+        
+        query.$or = [
+            { name: searchRegex },
+            { name_ar: searchRegex },
+            { desc: searchRegex },
+            { desc_ar: searchRegex },
+            { slug: searchRegex }
+        ];
     }
 
-    const products = await Product.find(query)
-        .populate("category")
-        .lean();
-    
-    if (!isAdmin) {
-        cache.set(cacheKey, products);
+    // 2. Category filter
+    if (req.query.category && mongoose.Types.ObjectId.isValid(req.query.category)) {
+        query.category = req.query.category;
     }
+
+    // 3. Price filters
+    if (req.query.minPrice || req.query.maxPrice) {
+        query.price = {};
+        if (req.query.minPrice) query.price.$gte = Number(req.query.minPrice);
+        if (req.query.maxPrice) query.price.$lte = Number(req.query.maxPrice);
+    }
+
+    // Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 13;
+    const skip = (page - 1) * limit;
+
+    // Execute queries in parallel for performance
+    const [products, totalResults] = await Promise.all([
+        Product.find(query)
+            .populate("category")
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Product.countDocuments(query)
+    ]);
+
+    const totalPages = Math.ceil(totalResults / limit) || 1;
 
     res.status(200).json({ 
         status: "success", 
-        message: "products fetched from database", 
+        message: "products fetched from database",
+        results: products.length,
+        totalResults,
+        totalPages,
+        currentPage: page,
         data: products 
     });
 });
@@ -67,6 +90,21 @@ exports.getProductBySlug = catchAsync(async (req, res, next) => {
     
     if (!myProduct) {
         return next(new AppError(`Product not found with slug: ${slug}`, 404));
+    }
+
+    res.status(200).json({ 
+        status: "success", 
+        data: myProduct 
+    });
+});
+
+// Fetches product by ID
+exports.getProductById = catchAsync(async (req, res, next) => {
+    const id = req.params.id;
+    const myProduct = await Product.findById(id);
+    
+    if (!myProduct) {
+        return next(new AppError(`Product not found with ID: ${id}`, 404));
     }
 
     res.status(200).json({ 
@@ -104,7 +142,7 @@ exports.getRelatedProducts = catchAsync(async (req, res, next) => {
 
 // Creates new store product
 exports.addProduct = catchAsync(async (req, res, next) => {
-    const { name, price, desc, stock, slug, category, subCategory, newArrived, mostPopular } = req.body || {};
+    const { name, price, discount, desc, stock, slug, category, subCategory, newArrived, mostPopular } = req.body || {};
 
     if (!name || price === undefined || price === null || stock === undefined || stock === null) {
         return next(new AppError("Please fill in all required fields (Name, Price, Stock).", 400));
@@ -123,6 +161,7 @@ exports.addProduct = catchAsync(async (req, res, next) => {
     const newProduct = await Product.create({
         name,
         price: Number(price),
+        discount: discount !== undefined && discount !== null && discount !== "" ? Number(discount) : 0,
         desc: desc || "",
         stock: Number(stock),
         slug: cleanSlug,
@@ -150,11 +189,12 @@ exports.updateProduct = catchAsync(async (req, res, next) => {
         return next(new AppError("Invalid Product ID format", 400));
     }
 
-    const { name, price, desc, stock, category, subCategory, newArrived, mostPopular, isActive } = req.body || {};
+    const { name, price, discount, desc, stock, category, subCategory, newArrived, mostPopular, isActive } = req.body || {};
 
     const payload = {};
     if (name !== undefined) payload.name = name;
     if (price !== undefined && price !== null && price !== "") payload.price = Number(price);
+    if (discount !== undefined && discount !== null && discount !== "") payload.discount = Number(discount);
     if (desc !== undefined) payload.desc = desc;
     if (stock !== undefined && stock !== null && stock !== "") payload.stock = Number(stock);
     if (newArrived !== undefined) payload.newArrived = newArrived === "true" || newArrived === true;
@@ -210,6 +250,28 @@ exports.deleteProduct = catchAsync(async (req, res, next) => {
     res.status(200).json({ 
         status: "success", 
         message: "Product deleted successfully" 
+    });
+});
+
+// Restores soft-deleted product by ID
+exports.restoreProduct = catchAsync(async (req, res, next) => {
+    const { id } = req.params;
+
+    const product = await Product.findByIdAndUpdate(
+        id,
+        { isDeleted: false, isActive: true },
+        { new: true }
+    );
+
+    if (!product) {
+        return next(new AppError("Product not found", 404));
+    }
+
+    cache.del(cacheKey);
+
+    res.status(200).json({ 
+        status: "success", 
+        message: "Product restored successfully" 
     });
 });
 
