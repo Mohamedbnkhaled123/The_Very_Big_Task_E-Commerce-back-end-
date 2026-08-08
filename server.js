@@ -74,13 +74,10 @@ app.use((err, req, res, next) => {
     const isProduction = process.env.NODE_ENV === 'production';
     const isJWTError = err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError';
 
-    const clientMessage = isJWTError 
-        ? 'Invalid or expired token. Please log in again.' 
-        : (isProduction && statusCode === 500 ? 'Something went wrong on the server!' : err.message);
-
     res.status(statusCode).json({
         status: status,
-        message: clientMessage
+        message: err.message,
+        stack: err.stack
     });
 });
 
