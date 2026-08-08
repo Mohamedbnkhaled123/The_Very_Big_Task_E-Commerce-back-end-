@@ -24,4 +24,4 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
-module.exports = cors(corsOptions);
+module.exports = cors(corsOptions); // Trigger deployment
