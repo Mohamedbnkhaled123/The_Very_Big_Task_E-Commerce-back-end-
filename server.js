@@ -74,6 +74,10 @@ app.use((err, req, res, next) => {
     });
 });
 
-server.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-});
+if (!process.env.VERCEL) {
+    server.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+    });
+}
+
+module.exports = app;
