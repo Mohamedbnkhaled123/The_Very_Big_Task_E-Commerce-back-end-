@@ -6,7 +6,14 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+    if (!origin) return callback(null, true);
+
+    const isAllowedExplicit = allowedOrigins.includes(origin);
+    const isVercelDomain = /\.vercel\.app$/.test(origin);
+    const isLocalhost = /^http:\/\/localhost:\d+$/.test(origin);
+
+    if (isAllowedExplicit || isVercelDomain || isLocalhost) {
       callback(null, true);
     } else {
       callback(new Error('Access denied by CORS security policy'), false);
