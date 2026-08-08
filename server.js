@@ -34,6 +34,16 @@ const port = process.env.PORT || 3000;
 const { connectDB } = require("./config/db.config.js");
 connectDB();
 
+// Ensure DB is connected for serverless invocations
+app.use(async (req, res, next) => {
+    try {
+        await connectDB();
+    } catch (e) {
+        console.error("DB middleware error:", e);
+    }
+    next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
